@@ -1,0 +1,48 @@
+name: Build Elden Combat
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      VCPKG_ROOT: C:/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg-cache
+          key: vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          cmake --preset release
+
+      - name: Build
+        run: cmake --build build/release --config Release
+
+      - name: Package mod
+        shell: pwsh
+        run: |
+          $out = "dist/Elden Combat"
+          New-Item -ItemType Directory -Force -Path "$out/SKSE/Plugins" | Out-Null
+          Copy-Item -Recurse -Force package/* $out/
+          Copy-Item -Force Compile/SKSE/Plugins/EldenCombat.dll "$out/SKSE/Plugins/"
+          Copy-Item -Force EldenCombat.ini "$out/SKSE/Plugins/"
+          Get-ChildItem -Recurse $out | Select-Object FullName, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EldenCombat
+          path: dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EldenCombat-pdb
+          path: Compile/SKSE/Plugins/*.pdb
