@@ -179,7 +179,7 @@ namespace
     std::recursive_mutex g_lock;
     std::unordered_map<RE::FormID, PoiseState> g_states;
     std::unordered_map<RE::FormID, float> g_ignoreHitsUntil;  // defenders who just perfect-blocked
-    struct LastHit { RE::FormID attacker{ 0 }; float time{ -1000.0f }; };
+    struct LastHit { RE::FormID attacker{ 0 }; RE::FormID source{ 0 }; float time{ -1000.0f }; };
     std::unordered_map<RE::FormID, LastHit> g_lastHit;
     std::unordered_map<RE::FormID, float> g_raceMult;
     std::atomic<float> g_clock{ 0.0f };   // unpaused game time in real seconds
@@ -422,8 +422,10 @@ namespace
             RestoreStaminaOnLightHit(attacker);
         }
 
-        if (!s->bEnablePoise || hit.cls == HitClass::kNone) {
-            g_lastSkip = fmt::format("no poise class (source {:08X})", a_source);
+        if (!s->bEnablePoise || hit.cls == HitClass::kNone || hit.damage <= 0.0f) {
+            // spells/abilities applied on hit (perks, enchantments) fire their own hit events
+            // from the same attacker; they must not count or block the weapon hit
+            g_lastSkip = fmt::format("no poise damage (source {:08X})", a_source);
             return;
         }
 
@@ -436,11 +438,11 @@ namespace
         }
         // one poise hit per attacker swing (enchantments and multi-hit events)
         auto& last = g_lastHit[target->GetFormID()];
-        if (last.attacker == attacker->GetFormID() && now - last.time < 0.08f) {
+        if (last.attacker == attacker->GetFormID() && last.source == a_source && now - last.time < 0.08f) {
             g_lastSkip = "duplicate event";
             return;
         }
-        last = { attacker->GetFormID(), now };
+        last = { attacker->GetFormID(), a_source, now };
 
         auto& st = Touch(target);
         if (now < st.brokenUntil) {
