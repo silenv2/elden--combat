@@ -182,8 +182,14 @@ namespace
     struct LastHit { RE::FormID attacker{ 0 }; float time{ -1000.0f }; };
     std::unordered_map<RE::FormID, LastHit> g_lastHit;
     std::unordered_map<RE::FormID, float> g_raceMult;
-    std::atomic<float> g_clock{ 0.0f };
+    std::atomic<float> g_clock{ 0.0f };   // unpaused game time in real seconds
+    std::chrono::steady_clock::time_point g_lastTick{};
+    bool g_tickInit{ false };
     float g_pruneTimer{ 0.0f };
+
+    // diagnostics (shown in the menu's Debug tab)
+    std::atomic<std::uint32_t> g_hitsSeen{ 0 }, g_hitsApplied{ 0 }, g_breaks{ 0 };
+    std::string g_lastSkip{ "-" };
 
     TRUEHUD_API::IVTrueHUD3* g_trueHUD{ nullptr };
     bool g_ownsSpecialBar{ false };
@@ -314,6 +320,7 @@ namespace
 
     void Break(RE::Actor* a_target, RE::Actor* a_attacker, float a_mag, PoiseState& st, const char* why)
     {
+        ++g_breaks;
         MarkBroken(a_target, st);
         SendStagger(a_target, a_attacker, a_mag);
         PoiseLog(fmt::format("{} poise broken ({}) mag {:.2f}", a_target->GetName(), why, a_mag));
@@ -404,6 +411,7 @@ namespace
         auto* attacker = attackerPtr.get();
         auto* target = targetPtr.get();
         if (!attacker || !target || attacker == target || target->IsDead()) {
+            g_lastSkip = "no attacker/target";
             return;
         }
 
@@ -415,6 +423,7 @@ namespace
         }
 
         if (!s->bEnablePoise || hit.cls == HitClass::kNone) {
+            g_lastSkip = fmt::format("no poise class (source {:08X})", a_source);
             return;
         }
 
@@ -422,17 +431,20 @@ namespace
         const float now = Now();
 
         if (auto it = g_ignoreHitsUntil.find(target->GetFormID()); it != g_ignoreHitsUntil.end() && now < it->second) {
+            g_lastSkip = "perfect-blocked";
             return;  // the target perfect-blocked this hit
         }
         // one poise hit per attacker swing (enchantments and multi-hit events)
         auto& last = g_lastHit[target->GetFormID()];
         if (last.attacker == attacker->GetFormID() && now - last.time < 0.08f) {
+            g_lastSkip = "duplicate event";
             return;
         }
         last = { attacker->GetFormID(), now };
 
         auto& st = Touch(target);
         if (now < st.brokenUntil) {
+            g_lastSkip = "break immunity";
             return;  // still staggered from the last break
         }
 
@@ -457,6 +469,10 @@ namespace
             return;
         }
 
+        ++g_hitsApplied;
+        if (s->bDebug) {
+            logger::info("[Poise] hit {} -> {} src {:08X} dmg {:.1f} power={} blocked={}", attacker->GetName(), target->GetName(), a_source, dmg, a_power, a_blocked);
+        }
         st.damage = CurrentDamage(st, st.max) + dmg;
         st.lastHit = now;
 
@@ -501,6 +517,7 @@ namespace
             const bool bash = a_event->flags.any(F::kBashAttack);
             const bool blocked = a_event->flags.any(F::kHitBlocked);
             const auto source = a_event->source;
+            ++g_hitsSeen;
             // process next frame so the timed block code has marked perfect blocks first
             SKSE::GetTaskInterface()->AddTask([ah = attacker->GetHandle(), th = target->GetHandle(), source, power, bash, blocked]() {
                 ProcessHit(ah, th, source, power, bash, blocked);
@@ -603,11 +620,21 @@ namespace Poise
 
     void Update(float a_delta)
     {
-        if (a_delta <= 0.0f || a_delta > 1.0f) {
+        (void)a_delta;
+        const auto tick = std::chrono::steady_clock::now();
+        if (!g_tickInit) {
+            g_tickInit = true;
+            g_lastTick = tick;
             return;
         }
-        g_clock = g_clock.load() + a_delta;
-        g_pruneTimer += a_delta;
+        float dt = std::chrono::duration<float>(tick - g_lastTick).count();
+        g_lastTick = tick;
+        if (auto* ui = RE::UI::GetSingleton(); ui && ui->GameIsPaused()) {
+            return;
+        }
+        dt = std::clamp(dt, 0.0f, 0.25f);
+        g_clock = g_clock.load() + dt;
+        g_pruneTimer += dt;
         if (g_pruneTimer < 10.0f) {
             return;
         }
@@ -830,6 +857,10 @@ namespace Poise
                 if (auto* player = RE::PlayerCharacter::GetSingleton()) {
                     ImGui::Text("Player poise: %.0f / %.0f", GetCurrent(player), GetMax(player));
                 }
+                ImGui::Text("Clock: %.1f s", Now());
+                ImGui::Text("Hit events seen: %u   applied: %u   breaks: %u", g_hitsSeen.load(), g_hitsApplied.load(), g_breaks.load());
+                ImGui::Text("Last skipped hit: %s", g_lastSkip.c_str());
+                ImGui::Text("TrueHUD: %s", g_trueHUD ? (g_ownsSpecialBar ? "poise bar active" : "found, special bar owned by another mod") : "not installed");
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();

@@ -12,9 +12,15 @@ void InitializeLog() {
 
     *path /= "EldenCombat.log"sv;
     
-    auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
+    std::vector<spdlog::sink_ptr> sinks;
+    sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true));
+    // second copy next to the plugin (lands in MO2's overwrite folder) so it is easy to find
+    try {
+        std::filesystem::create_directories("Data/SKSE/Plugins/EldenCombat");
+        sinks.push_back(std::make_shared<spdlog::sinks::basic_file_sink_mt>("Data/SKSE/Plugins/EldenCombat/EldenCombat.log", true));
+    } catch (...) {}
 
-    auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
+    auto log = std::make_shared<spdlog::logger>("global log"s, sinks.begin(), sinks.end());
 
     log->set_level(spdlog::level::debug);
     log->flush_on(spdlog::level::debug);
