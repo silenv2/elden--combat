@@ -318,6 +318,8 @@ namespace SmoothTime
         return gtm.get();
     }
 
+    float* CurrentGTM() { return GTM(); }
+
     static void EaseTo(float a_target, float a_seconds)
     {
         g_from = *GTM();
@@ -412,12 +414,15 @@ void AnimSpeedManager::Update(RE::ActorHandle a_actorHandle, float& a_deltaTime)
     std::lock_guard<std::mutex> lock(_animSpeedsLock);
     auto it = _animSpeeds.find(a_actorHandle);
     if (it != _animSpeeds.end()) {
-        float newDuration = it->second.duration - a_deltaTime;
+        // Elden Combat: count the hitstop in real time. Game delta is scaled by slow
+        // motion, so a 0.25 s hitstop during 25% slow motion used to last a full second.
+        const float gtm = (std::max)(*SmoothTime::CurrentGTM(), 0.05f);
+        float newDuration = it->second.duration - a_deltaTime / gtm;
         float speedMult = it->second.speedMult;
         
         if (newDuration <= 0.f) {
             // Calculate partial frame for smooth transition out
-            float mult = (a_deltaTime + newDuration) / a_deltaTime;
+            float mult = (std::clamp)((a_deltaTime / gtm + newDuration) / (a_deltaTime / gtm), 0.f, 1.f);
             a_deltaTime *= speedMult + ((1.f - speedMult) * (1.f - mult));
             _animSpeeds.erase(it);
         } else {
@@ -1549,7 +1554,10 @@ void TimedBlockAddon::ApplyTimedBlockEffects(RE::Actor* defender, RE::Actor* att
     }
     
     // 1. Freeze attacker's animation (hitstop effect - skip for timed dodge, it has its own attacker slow)
-    if (settings->bEnableHitstop && attacker && !fromTimedDodge) {
+    // Elden Combat: world slow motion already slows the attacker; stacking a hitstop on top
+    // made the enemy look frozen, so it is skipped unless explicitly allowed.
+    const bool slowmoThisParry = settings->bEnableSlowmo && !skipSlowmo && !TimedDodgeState::IsSlomoActive();
+    if (settings->bEnableHitstop && attacker && !fromTimedDodge && (!slowmoThisParry || settings->bHitstopWithSlowmo)) {
         float hitstopSpeed = settings->fHitstopSpeed;  // 0.0 = complete freeze, 0.1 = very slow
         float hitstopDuration = settings->fHitstopDuration;
         

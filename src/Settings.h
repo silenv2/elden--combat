@@ -63,7 +63,8 @@ public:
     float fSlowmoDuration{ 0.75f };        // Duration in seconds (real time)
     float fSlowmoEaseIn{ 0.08f };          // Elden Combat: seconds to fade into slow motion
     float fSlowmoEaseOut{ 0.35f };         // Elden Combat: seconds to fade back to normal speed
-    bool  bSmoothHitstop{ true };          // Elden Combat: hitstop eases back to normal speed
+    bool  bSmoothHitstop{ true };
+    bool  bHitstopWithSlowmo{ false };     // Elden Combat: also apply hitstop when world slow motion triggers          // Elden Combat: hitstop eases back to normal speed
     
     //==========================================================================
     // Counter Attack Settings - Cancel block animation to attack

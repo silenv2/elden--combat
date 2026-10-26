@@ -198,6 +198,12 @@ namespace Menu
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("The attacker starts slowed and gradually speeds back up,\ninstead of freezing and then snapping back to normal.");
                     }
+                    if (ImGui::Checkbox("Also During Slow Motion##hitstop", &settings->bHitstopWithSlowmo)) {
+                        State::MarkChanged();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Off (recommended): when perfect-block slow motion triggers, the hitstop is skipped\nbecause slow motion already slows the attacker. Both together look like a freeze.");
+                    }
                     ImGui::Unindent();
                 }
 

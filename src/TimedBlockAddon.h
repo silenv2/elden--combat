@@ -140,6 +140,7 @@ namespace SmoothTime
     void ReturnToNormal();
     void Reset();
     void Update();
+    float* CurrentGTM();
 }
 
 class TimedBlockAddon : public RE::BSTEventSink<RE::TESHitEvent> {
