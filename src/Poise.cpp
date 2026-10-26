@@ -2,6 +2,9 @@
 #include "SKSEMenuFramework.h"
 #include "TrueHUDAPI.h"
 
+// defined in TimedBlockAddon.cpp (vanilla, MCO and SCAR power attack detection)
+bool IsActorPowerAttacking(RE::Actor* actor, std::string* outReason);
+
 // ============================================================================
 // Settings
 // ============================================================================
@@ -16,6 +19,23 @@ namespace
     float GetF(CSimpleIniA& ini, const char* sec, const char* key, float def)
     {
         return static_cast<float>(ini.GetDoubleValue(sec, key, def));
+    }
+
+    std::uint32_t GetHex(CSimpleIniA& ini, const char* sec, const char* key, std::uint32_t def)
+    {
+        const char* v = ini.GetValue(sec, key, nullptr);
+        if (!v) {
+            return def;
+        }
+        try {
+            std::string str(v);
+            if (str.rfind("0x", 0) == 0 || str.rfind("0X", 0) == 0) {
+                str = str.substr(2);
+            }
+            return static_cast<std::uint32_t>(std::stoul(str, nullptr, 16)) & 0xFFFFFF;
+        } catch (...) {
+            return def;
+        }
     }
 }
 
@@ -69,7 +89,18 @@ void PoiseSettings::Load()
     fGuardBreakMag = GetF(ini, "Break", "fGuardBreakMag", fGuardBreakMag);
     bPerfectBlockBreaksPoise = ini.GetBoolValue("Break", "bPerfectBlockBreaksPoise", bPerfectBlockBreaksPoise);
 
+    bHyperArmor = ini.GetBoolValue("HyperArmor", "bHyperArmor", bHyperArmor);
+    fHyperArmorMult = GetF(ini, "HyperArmor", "fHyperArmorMult", fHyperArmorMult);
+    bHyperArmorPlayer = ini.GetBoolValue("HyperArmor", "bHyperArmorPlayer", bHyperArmorPlayer);
+    bHyperArmorNPC = ini.GetBoolValue("HyperArmor", "bHyperArmorNPC", bHyperArmorNPC);
+
     bTrueHUDBar = ini.GetBoolValue("TrueHUD", "bTrueHUDBar", bTrueHUDBar);
+    bBarColors = ini.GetBoolValue("TrueHUD", "bBarColors", bBarColors);
+    fDangerPct = GetF(ini, "TrueHUD", "fDangerPct", fDangerPct);
+    uNormalColor = GetHex(ini, "TrueHUD", "sNormalColor", uNormalColor);
+    uDangerColor = GetHex(ini, "TrueHUD", "sDangerColor", uDangerColor);
+    uBrokenColor = GetHex(ini, "TrueHUD", "sBrokenColor", uBrokenColor);
+    bNormalColorDefault = ini.GetBoolValue("TrueHUD", "bNormalColorDefault", bNormalColorDefault);
     bTrueHUDPlayerBar = ini.GetBoolValue("TrueHUD", "bTrueHUDPlayerBar", bTrueHUDPlayerBar);
     bFlashOnBreak = ini.GetBoolValue("TrueHUD", "bFlashOnBreak", bFlashOnBreak);
 
@@ -139,7 +170,18 @@ void PoiseSettings::Save()
     ini.SetDoubleValue("Break", "fGuardBreakMag", fGuardBreakMag);
     ini.SetBoolValue("Break", "bPerfectBlockBreaksPoise", bPerfectBlockBreaksPoise);
 
+    ini.SetBoolValue("HyperArmor", "bHyperArmor", bHyperArmor);
+    ini.SetDoubleValue("HyperArmor", "fHyperArmorMult", fHyperArmorMult);
+    ini.SetBoolValue("HyperArmor", "bHyperArmorPlayer", bHyperArmorPlayer);
+    ini.SetBoolValue("HyperArmor", "bHyperArmorNPC", bHyperArmorNPC);
+
     ini.SetBoolValue("TrueHUD", "bTrueHUDBar", bTrueHUDBar);
+    ini.SetBoolValue("TrueHUD", "bBarColors", bBarColors);
+    ini.SetDoubleValue("TrueHUD", "fDangerPct", fDangerPct);
+    ini.SetValue("TrueHUD", "sNormalColor", fmt::format("{:06X}", uNormalColor & 0xFFFFFF).c_str());
+    ini.SetValue("TrueHUD", "sDangerColor", fmt::format("{:06X}", uDangerColor & 0xFFFFFF).c_str());
+    ini.SetValue("TrueHUD", "sBrokenColor", fmt::format("{:06X}", uBrokenColor & 0xFFFFFF).c_str());
+    ini.SetBoolValue("TrueHUD", "bNormalColorDefault", bNormalColorDefault);
     ini.SetBoolValue("TrueHUD", "bTrueHUDPlayerBar", bTrueHUDPlayerBar);
     ini.SetBoolValue("TrueHUD", "bFlashOnBreak", bFlashOnBreak);
 
@@ -174,6 +216,8 @@ namespace
         float max{ 0.0f };             // cached max poise
         float maxStamp{ -1000.0f };
         float lastTouched{ 0.0f };
+        RE::ActorHandle handle{};
+        int colorState{ -1 };          // last bar color applied: 0 normal, 1 danger, 2 broken
     };
 
     std::recursive_mutex g_lock;
@@ -286,6 +330,7 @@ namespace
             st.maxStamp = now;
         }
         st.lastTouched = now;
+        st.handle = a->GetHandle();
         return st;
     }
 
@@ -383,6 +428,25 @@ namespace
         return h;
     }
 
+    // the target is winding up or swinging a power attack
+    bool IsHyperArmored(RE::Actor* a)
+    {
+        auto* s = PoiseSettings::GetSingleton();
+        if (!s->bHyperArmor) {
+            return false;
+        }
+        const bool isPlayer = a->IsPlayerRef();
+        if ((isPlayer && !s->bHyperArmorPlayer) || (!isPlayer && !s->bHyperArmorNPC)) {
+            return false;
+        }
+        using AS = RE::ATTACK_STATE_ENUM;
+        const auto state = a->AsActorState()->GetAttackState();
+        if (state < AS::kDraw || state > AS::kFollowThrough) {
+            return false;
+        }
+        return IsActorPowerAttacking(a, nullptr);
+    }
+
     void RestoreStaminaOnLightHit(RE::Actor* attacker)
     {
         auto* s = PoiseSettings::GetSingleton();
@@ -464,6 +528,12 @@ namespace
         float dmg = hit.damage;
         if (a_power) dmg *= s->fPowerAttackMult;
         if (a_blocked) dmg *= s->fBlockedHitMult;
+        if (IsHyperArmored(target)) {
+            dmg *= s->fHyperArmorMult;
+            if (s->bDebug) {
+                PoiseLog(fmt::format("{} hyper armor", target->GetName()));
+            }
+        }
         if (target->IsPlayerRef()) dmg *= s->fNPCToPlayerMult;
         else if (attacker->IsPlayerRef()) dmg *= s->fPlayerToNPCMult;
         else dmg *= s->fNPCToNPCMult;
@@ -559,6 +629,76 @@ namespace
     }
 }
 
+namespace
+{
+    float g_colorTimer{ 0.0f };
+
+    std::uint32_t ToTrueHUDColor(std::uint32_t rgb) { return rgb & 0xFFFFFF; }
+
+    void UpdateBarColors(float a_dt)
+    {
+        auto* s = PoiseSettings::GetSingleton();
+        if (!g_trueHUD || !g_ownsSpecialBar) {
+            return;
+        }
+        g_colorTimer += a_dt;
+        if (g_colorTimer < 0.1f) {
+            return;
+        }
+        g_colorTimer = 0.0f;
+
+        struct Change { RE::ActorHandle handle; int state; };
+        std::vector<Change> changes;
+        {
+            std::lock_guard lock(g_lock);
+            const float now = Now();
+            for (auto& [id, st] : g_states) {
+                int state = 0;
+                if (s->bBarColors && st.max > 0.0f) {
+                    if (now < st.brokenUntil) {
+                        state = 2;
+                    } else if ((st.max - CurrentDamage(st, st.max)) / st.max * 100.0f <= s->fDangerPct) {
+                        state = 1;
+                    }
+                }
+                if (state != st.colorState) {
+                    st.colorState = state;
+                    changes.push_back({ st.handle, state });
+                }
+            }
+        }
+        using BC = TRUEHUD_API::BarColorType;
+        for (const auto& c : changes) {
+            if (!c.handle) {
+                continue;
+            }
+            switch (c.state) {
+            case 2:
+                g_trueHUD->OverrideSpecialBarColor(c.handle, BC::BarColor, ToTrueHUDColor(s->uBrokenColor));
+                break;
+            case 1:
+                g_trueHUD->OverrideSpecialBarColor(c.handle, BC::BarColor, ToTrueHUDColor(s->uDangerColor));
+                break;
+            default:
+                if (s->bBarColors && !s->bNormalColorDefault) {
+                    g_trueHUD->OverrideSpecialBarColor(c.handle, BC::BarColor, ToTrueHUDColor(s->uNormalColor));
+                } else {
+                    g_trueHUD->RevertSpecialBarColor(c.handle, BC::BarColor);
+                }
+                break;
+            }
+        }
+    }
+
+    void ResetBarColors()
+    {
+        std::lock_guard lock(g_lock);
+        for (auto& [id, st] : g_states) {
+            st.colorState = -1;  // reapplied on the next update
+        }
+    }
+}
+
 namespace Poise
 {
     void OnDataLoaded()
@@ -637,6 +777,7 @@ namespace Poise
         dt = std::clamp(dt, 0.0f, 0.25f);
         g_clock = g_clock.load() + dt;
         g_pruneTimer += dt;
+        UpdateBarColors(dt);
         if (g_pruneTimer < 10.0f) {
             return;
         }
@@ -818,6 +959,13 @@ namespace Poise
                 Check("Perfect Block Breaks Poise##b", &s->bPerfectBlockBreaksPoise, "Perfect block and ward parry staggers also empty the attacker's poise,\nso there is only one stagger and one sound.");
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Hyper Armor")) {
+                Check("Hyper Armor##h", &s->bHyperArmor, "Actors take less poise damage while winding up or swinging a power attack,\nso heavy attacks can't be interrupted as easily (Elden Ring style).");
+                Slider("Poise Damage Taken##h", &s->fHyperArmorMult, 0.0f, 1.0f, "x%.2f", "Poise damage multiplier during a power attack.\n0 = unbreakable while power attacking, 1 = no hyper armor.");
+                Check("For Player##h", &s->bHyperArmorPlayer, "You get hyper armor during your power attacks.");
+                Check("For NPCs##h", &s->bHyperArmorNPC, "Enemies get hyper armor during their power attacks.");
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("TrueHUD")) {
                 bool bar = s->bTrueHUDBar;
                 if (ImGui::Checkbox("Poise Bar##t", &bar)) {
@@ -828,6 +976,34 @@ namespace Poise
                 Tip("Show poise as TrueHUD's special bar on enemy info bars and boss bars.\nTrueHUD's special bar must be enabled in TrueHUD's own settings.");
                 Check("Player Poise Bar##t", &s->bTrueHUDPlayerBar, "Also show your own poise under your health/stamina bars.\nTakes effect after a game restart.");
                 Check("Flash on Break##t", &s->bFlashOnBreak, "Flash the poise bar when it breaks.");
+                ImGui::Separator();
+                if (ImGui::Checkbox("Bar Colors##t", &s->bBarColors)) {
+                    g_dirty = true;
+                    ResetBarColors();
+                }
+                Tip("Recolor the poise bar: normal, danger (close to breaking) and broken.");
+                Slider("Danger Below (%)##t", &s->fDangerPct, 0.0f, 90.0f, "%.0f %%", "The bar turns to the danger color at or below this much poise.\n35% = one more 1H hit breaks it.");
+                auto colorEdit = [](const char* label, std::uint32_t& rgb, const char* tip) {
+                    float c[3] = { ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f };
+                    if (ImGui::ColorEdit3(label, c)) {
+                        rgb = (static_cast<std::uint32_t>(c[0] * 255.0f + 0.5f) << 16) |
+                              (static_cast<std::uint32_t>(c[1] * 255.0f + 0.5f) << 8) |
+                              static_cast<std::uint32_t>(c[2] * 255.0f + 0.5f);
+                        g_dirty = true;
+                        ResetBarColors();
+                    }
+                    Tip(tip);
+                };
+                if (ImGui::Checkbox("Keep TrueHUD Color When Healthy##t", &s->bNormalColorDefault)) {
+                    g_dirty = true;
+                    ResetBarColors();
+                }
+                Tip("Use TrueHUD's own special bar color until poise gets low.");
+                if (!s->bNormalColorDefault) {
+                    colorEdit("Normal##t", s->uNormalColor, "Bar color while poise is healthy.");
+                }
+                colorEdit("Danger##t", s->uDangerColor, "Bar color when close to breaking.");
+                colorEdit("Broken##t", s->uBrokenColor, "Bar color while poise is broken.");
                 ImGui::Text("TrueHUD: %s", g_trueHUD ? (g_ownsSpecialBar ? "poise bar active" : "found, bar not active") : "not installed");
                 ImGui::EndTabItem();
             }

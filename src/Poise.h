@@ -63,10 +63,22 @@ public:
     float fGuardBreakMag{ 1.0f };
     bool  bPerfectBlockBreaksPoise{ true }; // perfect block / ward parry staggers empty the attacker's poise
 
+    // [HyperArmor] reduced poise damage while winding up / swinging a power attack
+    bool  bHyperArmor{ true };
+    float fHyperArmorMult{ 0.4f };       // poise damage multiplier during a power attack
+    bool  bHyperArmorPlayer{ true };
+    bool  bHyperArmorNPC{ true };
+
     // [TrueHUD]
     bool  bTrueHUDBar{ true };
     bool  bTrueHUDPlayerBar{ true };     // needs a restart to change
     bool  bFlashOnBreak{ true };
+    bool  bBarColors{ true };            // recolor the poise bar by state
+    float fDangerPct{ 35.0f };           // at or below this % the bar turns "danger"
+    std::uint32_t uNormalColor{ 0xE0C068 };  // RGB
+    std::uint32_t uDangerColor{ 0xFF8C1A };
+    std::uint32_t uBrokenColor{ 0xE53935 };
+    bool  bNormalColorDefault{ true };   // keep TrueHUD's own color while poise is healthy
 
     // [Stamina] Valhalla-style stamina add-on
     bool  bStaminaAddon{ true };
