@@ -192,6 +192,12 @@ namespace Menu
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("How long the attacker stays frozen.\n0.1 = quick flash\n0.2 = noticeable (default)\n0.4+ = dramatic pause");
                     }
+                    if (ImGui::Checkbox("Smooth (ease out)##hitstop", &settings->bSmoothHitstop)) {
+                        State::MarkChanged();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("The attacker starts slowed and gradually speeds back up,\ninstead of freezing and then snapping back to normal.");
+                    }
                     ImGui::Unindent();
                 }
 
@@ -401,6 +407,18 @@ namespace Menu
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Real-time duration of the slowmo effect.\n0.3 = brief flash\n0.5 = default\n1.0+ = extended dramatic pause");
+                    }
+                    if (ImGui::SliderFloat("Fade In (sec)##slowmo", &settings->fSlowmoEaseIn, 0.0f, 0.5f, "%.2f sec")) {
+                        State::MarkChanged();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("How long the world takes to slow down.\nShared by perfect block, perfect dodge and counter slow time.\n0 = instant");
+                    }
+                    if (ImGui::SliderFloat("Fade Out (sec)##slowmo", &settings->fSlowmoEaseOut, 0.0f, 1.5f, "%.2f sec")) {
+                        State::MarkChanged();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("How long the world takes to return to normal speed.\nShared by perfect block, perfect dodge and counter slow time.\n0 = instant");
                     }
                     ImGui::Unindent();
                 }

@@ -80,6 +80,9 @@ void Settings::LoadSettings() {
     bEnableSlowmo = ini.GetBoolValue("Slowmo", "bEnableSlowmo", false);
     fSlowmoSpeed = static_cast<float>(ini.GetDoubleValue("Slowmo", "fSlowmoSpeed", 0.25));
     fSlowmoDuration = static_cast<float>(ini.GetDoubleValue("Slowmo", "fSlowmoDuration", 0.75));
+    fSlowmoEaseIn = static_cast<float>(ini.GetDoubleValue("Slowmo", "fEaseIn", 0.08));
+    fSlowmoEaseOut = static_cast<float>(ini.GetDoubleValue("Slowmo", "fEaseOut", 0.35));
+    bSmoothHitstop = ini.GetBoolValue("Hitstop", "bSmooth", true);
     
     // Load Counter Attack settings
     bEnableCounterAttack = ini.GetBoolValue("CounterAttack", "bEnableCounterAttack", false);
@@ -374,6 +377,9 @@ void Settings::SaveSettings() {
     ini.SetBoolValue("Slowmo", "bEnableSlowmo", bEnableSlowmo);
     ini.SetDoubleValue("Slowmo", "fSlowmoSpeed", fSlowmoSpeed);
     ini.SetDoubleValue("Slowmo", "fSlowmoDuration", fSlowmoDuration);
+    ini.SetDoubleValue("Slowmo", "fEaseIn", fSlowmoEaseIn);
+    ini.SetDoubleValue("Slowmo", "fEaseOut", fSlowmoEaseOut);
+    ini.SetBoolValue("Hitstop", "bSmooth", bSmoothHitstop);
     
     // Save Counter Attack settings
     ini.SetBoolValue("CounterAttack", "bEnableCounterAttack", bEnableCounterAttack);

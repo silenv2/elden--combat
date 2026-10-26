@@ -51,6 +51,7 @@ private:
     {
         float speedMult;
         float duration;
+        float total{ 0.f };
     };
     
     // Use custom hash for ActorHandle
@@ -131,6 +132,14 @@ namespace CooldownState
     
     // Check if player has the parry window effect
     bool PlayerHasParryWindowEffect();
+}
+
+namespace SmoothTime
+{
+    void SlowTo(float a_target);
+    void ReturnToNormal();
+    void Reset();
+    void Update();
 }
 
 class TimedBlockAddon : public RE::BSTEventSink<RE::TESHitEvent> {

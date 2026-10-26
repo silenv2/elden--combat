@@ -303,6 +303,67 @@ bool RollStaggerSuccess(RE::Actor* a_player)
 }
 
 //=============================================================================
+// Elden Combat: SmoothTime - eases the global time multiplier instead of
+// snapping it, so slow motion fades in and out.
+//=============================================================================
+namespace SmoothTime
+{
+    static float g_from{ 1.0f }, g_to{ 1.0f }, g_t{ 0.0f }, g_dur{ 0.0f };
+    static bool g_active{ false };
+    static std::chrono::steady_clock::time_point g_last{};
+
+    static float* GTM()
+    {
+        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
+        return gtm.get();
+    }
+
+    static void EaseTo(float a_target, float a_seconds)
+    {
+        g_from = *GTM();
+        g_to = a_target;
+        g_t = 0.0f;
+        g_dur = a_seconds;
+        g_last = std::chrono::steady_clock::now();
+        if (a_seconds <= 0.0f) {
+            *GTM() = a_target;
+            g_active = false;
+        } else {
+            g_active = true;
+        }
+    }
+
+    void SlowTo(float a_target) { EaseTo(a_target, Settings::GetSingleton()->fSlowmoEaseIn); }
+    void ReturnToNormal() { EaseTo(1.0f, Settings::GetSingleton()->fSlowmoEaseOut); }
+    void Reset()
+    {
+        g_active = false;
+        *GTM() = 1.0f;
+    }
+
+    void Update()
+    {
+        if (!g_active) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        float dt = std::chrono::duration<float>(now - g_last).count();
+        g_last = now;
+        if (auto* ui = RE::UI::GetSingleton(); ui && ui->GameIsPaused()) {
+            return;
+        }
+        g_t += (std::min)(dt, 0.1f);
+        float k = g_dur > 0.0f ? (std::min)(g_t / g_dur, 1.0f) : 1.0f;
+        k = k * k * (3.0f - 2.0f * k);  // smoothstep
+        *GTM() = g_from + (g_to - g_from) * k;
+        if (g_t >= g_dur) {
+            *GTM() = g_to;
+            g_active = false;
+        }
+    }
+}
+
+//=============================================================================
 // AnimSpeedManager Implementation - Per-Actor Animation Freezing
 //=============================================================================
 
@@ -313,8 +374,9 @@ void AnimSpeedManager::SetAnimSpeed(RE::ActorHandle a_actorHandle, float a_speed
     if (it != _animSpeeds.end()) {
         it->second.speedMult = a_speedMult;
         it->second.duration = a_duration;
+        it->second.total = a_duration;
     } else {
-        _animSpeeds.emplace(a_actorHandle, AnimSpeedData{ a_speedMult, a_duration });
+        _animSpeeds.emplace(a_actorHandle, AnimSpeedData{ a_speedMult, a_duration, a_duration });
     }
 }
 
@@ -360,7 +422,13 @@ void AnimSpeedManager::Update(RE::ActorHandle a_actorHandle, float& a_deltaTime)
             _animSpeeds.erase(it);
         } else {
             it->second.duration = newDuration;
-            // Apply speed multiplier
+            if (Settings::GetSingleton()->bSmoothHitstop && it->second.total > 0.f) {
+                // Elden Combat: ease from the hitstop speed back to normal instead of
+                // holding a freeze and snapping back
+                float k = 1.f - newDuration / it->second.total;
+                k = k * k * (3.f - 2.f * k);
+                speedMult = speedMult + (1.f - speedMult) * k;
+            }
             a_deltaTime *= speedMult;
         }
     }
@@ -403,6 +471,7 @@ void AnimSpeedManager::PlayerAnimationHook::PlayerCharacter_UpdateAnimation(RE::
     
     AnimSpeedManager::Update(a_this->GetHandle(), a_deltaTime);
     Poise::Update(a_deltaTime);
+    SmoothTime::Update();
     _originalFunc(a_this, a_deltaTime);
 
     // 1.0.2: snapshot player HP at the END of UpdateAnimation, so the
@@ -2255,8 +2324,7 @@ void TimedBlockAddon::ApplySlowmo(float speed, float duration) {
     const uint32_t gen = ++g_slowmoGeneration;
     
     SKSE::GetTaskInterface()->AddTask([speed]() {
-        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-        *gtm = speed;
+        SmoothTime::SlowTo(speed);
         logger::debug("Slowmo activated: {:.0f}%", speed * 100.0f);
     });
     
@@ -2270,8 +2338,7 @@ void TimedBlockAddon::ApplySlowmo(float speed, float duration) {
                 return;
             }
             if (!TimedDodgeState::IsSlomoActive()) {
-                static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-                *gtm = 1.0f;
+                SmoothTime::ReturnToNormal();
                 logger::debug("Slowmo ended, speed restored to normal");
             } else {
                 logger::debug("Slowmo restoration skipped - timed dodge slomo is active");
@@ -4042,8 +4109,7 @@ void CounterSlowTimeState::Start()
     
     // Apply slow time
     SKSE::GetTaskInterface()->AddTask([scale = settings->fCounterSlowTimeScale]() {
-        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-        *gtm = scale;
+        SmoothTime::SlowTo(scale);
     });
     
     if (settings->bDebugLogging) {
@@ -4067,8 +4133,7 @@ void CounterSlowTimeState::End()
     
     // Restore normal time
     SKSE::GetTaskInterface()->AddTask([]() {
-        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-        *gtm = 1.0f;
+        SmoothTime::ReturnToNormal();
     });
 
     if (!CounterAttackState::damageBonusActive) {
@@ -5300,8 +5365,7 @@ void TimedDodgeState::Start(RE::Actor* attacker)
     // Start slow-motion via global time multiplier (set directly, not via AddTask,
     // to avoid a race where End() restores GTM=1.0 before the deferred task fires)
     if (settings->bTimedDodgeSlomo) {
-        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-        *gtm = settings->fTimedDodgeSlomoSpeed;
+        SmoothTime::SlowTo(settings->fTimedDodgeSlomoSpeed);
     }
     
     // Arm extended i-frames (dodge animation's own i-frames play out first via MaxsuIFrame,
@@ -5368,8 +5432,7 @@ void TimedDodgeState::End()
     
     // Restore normal game speed immediately (not via AddTask, so lunge/counter starts at full speed)
     if (slomoActive) {
-        static REL::Relocation<float*> gtm{ RELOCATION_ID(511883, 388443) };
-        *gtm = 1.0f;
+        SmoothTime::ReturnToNormal();
         slomoActive = false;
     }
     

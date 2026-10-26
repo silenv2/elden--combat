@@ -95,6 +95,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message) noexcept {
             
             CounterAnimEventHandler::Register();
             Poise::OnGameLoaded();
+            SmoothTime::Reset();
             break;
         }
         case SKSE::MessagingInterface::kNewGame: {
@@ -119,6 +120,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message) noexcept {
             
             CounterAnimEventHandler::Register();
             Poise::OnGameLoaded();
+            SmoothTime::Reset();
             break;
         }
         default:
